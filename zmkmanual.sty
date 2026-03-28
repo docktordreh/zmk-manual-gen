@@ -1,0 +1,112 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{zmkmanual}[2026/03/28 ZMK manual generator]
+
+\RequirePackage{ifluatex}
+\ifluatex\else
+  \PackageError{zmkmanual}{LuaLaTeX required}{Compile with lualatex.}
+\fi
+
+\RequirePackage{kvoptions}
+\RequirePackage{xparse}
+\RequirePackage{tikz}
+\RequirePackage{graphicx}
+
+\SetupKeyvalOptions{family=zmkmanual,prefix=zmkmanual@}
+\DeclareStringOption{}
+\DeclareStringOption[cosmotyl]{keyboard}
+\DeclareStringOption{keymap}
+\DeclareStringOption{layout}
+\DeclareStringOption{behaviors}
+\DeclareStringOption[1.00]{keycapscale}
+\DeclareStringOption[1.15]{overviewscale}
+\DeclareBoolOption[false]{strict}
+\ProcessKeyvalOptions*
+
+\directlua{
+  local lua_file = kpse.find_file("zmkmanual.lua", "tex")
+  if lua_file == nil then
+    lua_file = "zmkmanual.lua"
+  end
+  zmkmanual = dofile(lua_file)
+}
+
+\newcommand{\zmkmanual@strictvalue}{false}
+\ifzmkmanual@strict
+  \renewcommand{\zmkmanual@strictvalue}{true}
+\fi
+
+\tikzset{
+  zmkmanual/key/.style={
+    draw=black,
+    line width=0.2pt,
+    rounded corners=1pt,
+    inner sep=0pt,
+    fill=white
+  },
+  zmkmanual/tap/.style={
+    font=\scriptsize\ttfamily,
+    align=center,
+    text height=1.6ex,
+    text depth=.2ex
+  },
+  zmkmanual/hold/.style={
+    font=\tiny\ttfamily,
+    align=center,
+    text height=1.4ex,
+    text depth=.2ex
+  },
+  zmkmanual/shifted/.style={
+    font=\tiny\ttfamily,
+    align=center,
+    text height=1.4ex,
+    text depth=.2ex
+  }
+}
+
+\newsavebox{\zmkmanual@fitbox}
+\newcommand{\zmkmanualfit}[2]{%
+  \sbox{\zmkmanual@fitbox}{#2}%
+  \ifdim\wd\zmkmanual@fitbox>#1
+    \resizebox{#1}{!}{#2}%
+  \else
+    #2%
+  \fi
+}
+
+\newcommand{\zmkLoadConfig}{%
+  \directlua{
+    zmkmanual.load_config({
+      keyboard = "\luaescapestring{\zmkmanual@keyboard}",
+      keymap = "\luaescapestring{\zmkmanual@keymap}",
+      layout = "\luaescapestring{\zmkmanual@layout}",
+      behaviors = "\luaescapestring{\zmkmanual@behaviors}",
+      keycap_scale = "\luaescapestring{\zmkmanual@keycapscale}",
+      overview_scale = "\luaescapestring{\zmkmanual@overviewscale}",
+      strict = \zmkmanual@strictvalue
+    })
+  }%
+}
+
+\NewDocumentCommand{\zmkPrintLayer}{m}{%
+  \directlua{zmkmanual.print_layer("\luaescapestring{#1}")}%
+}
+
+\newcommand{\zmkPrintAllLayers}{%
+  \directlua{zmkmanual.print_all_layers()}%
+}
+
+\newcommand{\zmkPrintLayerOverview}{%
+  \directlua{zmkmanual.print_layer_overview()}%
+}
+
+\newcommand{\zmkPrintLegend}{%
+  \directlua{zmkmanual.print_legend()}%
+}
+
+\newcommand{\zmkPrintCombos}{%
+  \directlua{zmkmanual.print_combos()}%
+}
+
+\newcommand{\zmkPrintMacros}{%
+  \directlua{zmkmanual.print_macros()}%
+}
