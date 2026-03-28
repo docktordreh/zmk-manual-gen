@@ -1,27 +1,6 @@
-# zmkmanual
+# zmk-manual-gen
 
-LuaLaTeX-first toolkit for generating physical-layout ZMK manuals from source-of-truth keymaps.
-
-## Scoping Plan
-
-1. Core reliability
-   - Harden parser coverage for real-world behavior patterns.
-   - Tighten strict-mode error paths and diagnostics.
-   - Keep deterministic output ordering for stable docs diffs.
-2. Authoring ergonomics
-   - Improve label/alias normalization and symbol rendering.
-   - Expand script ergonomics for keyboard naming and output targeting.
-   - Keep empty-state behavior explicit for combos/macros.
-3. Documentation + publishing
-   - Add reproducible image export workflow for README/docs embedding.
-   - Provide opinionated examples and copy-paste command recipes.
-   - Add a concise maintenance checklist for future contributors.
-
-Unresolved questions:
-
-- Keep docs minimal utilitarian, or add branded style variant?
-- Export only PNG from script, or add SVG/JPG modes?
-- Keep one-page-per-image always, or add selected-page flag?
+LuaLaTeX toolkit for generating physical-layout ZMK manuals from source-of-truth keymaps.
 
 ## Repository Layout
 
@@ -88,14 +67,22 @@ Output naming pattern:
 - `docs/images/cosmotyl/cosmotyl-manual-page-02.png`
 - ...
 
-Example images:
+## PDF Walkthrough
+
+### All-Layers Overview
 
 ![Cosmotyl manual page 1](docs/images/cosmotyl/cosmotyl-manual-page-01.png)
+
+This first page is an overlay view across all layers. Every physical key position appears once, and each colored line inside a key is that key's behavior on a different layer. The "Layer colors" legend maps each color to its layer.
+
+### Per-Layer Detail Page
+
 ![Cosmotyl manual page 2](docs/images/cosmotyl/cosmotyl-manual-page-02.png)
 
-## Notes
+After the overview, the PDF switches to individual layer pages. Each key is rendered in exact physical position, and complex behaviors are called out with connector lines to the legend so keycaps stay readable while still documenting hold-tap/tap-dance/layer actions.
 
-- LuaLaTeX-only package.
-- Style intentionally utilitarian.
-- Combos/macros sections show explicit empty-state text when absent.
-- For dense layouts, prefer larger page formats (e.g. `a3paper,landscape`).
+### Reference Sections
+
+![Cosmotyl manual page 10](docs/images/cosmotyl/cosmotyl-manual-page-10.png)
+
+The final section is reference-oriented: behavior index (ref/count/meaning), then combos and macros. Combos/macros are always shown, including explicit "none defined" output when the source has none.
