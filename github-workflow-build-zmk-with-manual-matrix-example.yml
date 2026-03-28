@@ -1,0 +1,45 @@
+name: Build ZMK firmware + manuals
+on: [push, pull_request, workflow_dispatch]
+
+jobs:
+  build:
+    uses: zmkfirmware/zmk/.github/workflows/build-user-config.yml@v0.3
+
+  manual:
+    runs-on: ubuntu-latest
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shield: corne
+            keyboard: corne
+          - shield: kyria
+            keyboard: kyria
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: config
+
+      - uses: actions/checkout@v4
+        with:
+          repository: your-org/zmk-manual-gen
+          ref: main
+          path: zmk-manual-gen
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y texlive-luatex texlive-latex-extra texlive-pictures poppler-utils
+
+      - name: Build manual
+        run: |
+          mkdir -p artifacts/${{ matrix.shield }}
+          python zmk-manual-gen/build-manual.py config \
+            --shield ${{ matrix.shield }} \
+            --keyboard ${{ matrix.keyboard }} \
+            --output artifacts/${{ matrix.shield }} \
+            --images-dir artifacts/${{ matrix.shield }}/images
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zmk-manual-${{ matrix.shield }}-${{ github.sha }}
+          path: artifacts/${{ matrix.shield }}/

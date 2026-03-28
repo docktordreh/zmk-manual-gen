@@ -11,6 +11,8 @@ LuaLaTeX toolkit for generating physical-layout ZMK manuals from source-of-truth
 - `labels.lua`: key labels, aliases, symbol normalization
 - `annotations.lua`: complex-binding callouts and legend connectors
 - `build-manual.py`: one-shot PDF (and optional image) build helper
+- `github-workflow-build-zmk-example.yml`: minimal upstream ZMK firmware workflow
+- `github-workflow-build-zmk-with-manual-matrix-example.yml`: extension pattern with manual build matrix by shield
 
 ## LaTeX Commands
 
@@ -66,6 +68,30 @@ Output naming pattern:
 - `docs/images/cosmotyl/cosmotyl-manual-page-01.png`
 - `docs/images/cosmotyl/cosmotyl-manual-page-02.png`
 - ...
+
+## GitHub Actions Integration
+
+This repo includes workflow examples for extending the upstream ZMK reusable build workflow.
+
+Minimal base workflow:
+
+- `github-workflow-build-zmk-example.yml`
+- Only calls `zmkfirmware/zmk/.github/workflows/build-user-config.yml@v0.3`
+
+Extended workflow with manual generation matrix:
+
+- `github-workflow-build-zmk-with-manual-matrix-example.yml`
+- Keeps the same base ZMK build job
+- Adds `manual` job with matrix `shield`/`keyboard`
+- Builds PDF + PNG pages via `build-manual.py`
+- Uploads per-shield artifacts
+
+How to use the extended example:
+
+1. Copy file to your ZMK config repo under `.github/workflows/`.
+2. Replace matrix values with your real shields/keyboards.
+3. Replace `repository: your-org/zmk-manual-gen` with your tool repo.
+4. Optionally pin `ref:` to a release tag or commit SHA.
 
 ## PDF Walkthrough
 
