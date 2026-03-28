@@ -1,5 +1,28 @@
 local M = {}
 
+local SIMPLE_SUPPORTED_REFS = {
+  kp = true,
+  none = true,
+  trans = true,
+  to = true,
+  mo = true,
+  lt = true,
+  bt = true,
+  mmv = true,
+  msc = true,
+  mkp = true,
+  out = true,
+  studio_unlock = true,
+}
+
+local function emit_soft_warning(deps, message)
+  if deps.soft_warn ~= nil then
+    deps.soft_warn(message)
+    return
+  end
+  deps.warn(message)
+end
+
 local function strip_comments(text)
   local no_block = text:gsub("/%*.-%*/", "")
   local no_line = no_block:gsub("//[^\n]*", "")
@@ -19,10 +42,13 @@ local function parse_int(raw)
   return tonumber(cleaned)
 end
 
-local function behavior_call(ref, args)
+local function behavior_call(ref, args, meta)
   return {
     ref = ref,
     args = args,
+    raw = meta and meta.raw or nil,
+    expected_arity = meta and meta.expected_arity or nil,
+    missing_args = meta and meta.missing_args or false,
   }
 end
 
@@ -50,7 +76,15 @@ local function parse_calls(text, resolve_arity)
         cursor = cursor + 1
       end
 
-      table.insert(calls, behavior_call(ref, args))
+      local raw_tokens = { token }
+      for _, arg in ipairs(args) do
+        table.insert(raw_tokens, arg)
+      end
+      table.insert(calls, behavior_call(ref, args, {
+        raw = table.concat(raw_tokens, " "),
+        expected_arity = arity,
+        missing_args = #args < arity,
+      }))
       index = cursor
     end
   end
@@ -80,6 +114,18 @@ local function parse_bindings_property(body, resolve_arity)
   end
 
   return calls
+end
+
+local function parse_int_list(raw, fail, context)
+  local values = {}
+  for token in raw:gmatch("[^%s]+") do
+    local parsed = parse_int(token)
+    if parsed == nil then
+      fail("invalid integer token '" .. token .. "' in " .. context)
+    end
+    table.insert(values, parsed)
+  end
+  return values
 end
 
 local function find_named_blocks(text, fail)
@@ -236,7 +282,178 @@ local function parse_layers(text, behavior_arity, deps)
   return layers
 end
 
-local function parse_physical_keys(text, warn)
+local function parse_position_map(text, keyboard, deps)
+  local cleaned = strip_comments(text)
+  local top_blocks = find_named_blocks(cleaned, deps.fail)
+  local map_root = nil
+
+  for _, block in ipairs(top_blocks) do
+    if block.name == "keypad_position_map" then
+      map_root = block
+      break
+    end
+  end
+
+  if map_root == nil then
+    return nil
+  end
+
+  local map_blocks = find_named_blocks(map_root.body, deps.fail)
+  local candidates = {}
+
+  for _, block in ipairs(map_blocks) do
+    local positions_expr = block.body:match("positions%s*=%s*<([^>]-)>")
+    if positions_expr ~= nil then
+      table.insert(candidates, {
+        name = block.name,
+        positions = parse_int_list(positions_expr, deps.fail, "position map '" .. block.name .. "'"),
+      })
+    end
+  end
+
+  if #candidates == 0 then
+    emit_soft_warning(deps, "keypad_position_map found but no positions list detected")
+    return nil
+  end
+
+  if keyboard ~= nil and keyboard ~= "" then
+    for _, candidate in ipairs(candidates) do
+      if candidate.name == keyboard then
+        return candidate.positions
+      end
+    end
+    emit_soft_warning(
+      deps,
+      "position map for keyboard '" .. keyboard .. "' not found; using '" .. candidates[1].name .. "'"
+    )
+  elseif #candidates > 1 then
+    emit_soft_warning(deps, "multiple position maps detected; using '" .. candidates[1].name .. "'")
+  end
+
+  return candidates[1].positions
+end
+
+local function apply_position_map(physical, positions, deps)
+  if positions == nil then
+    return physical
+  end
+
+  if #positions ~= #physical then
+    deps.fail(
+      "position map has " .. tostring(#positions) .. " entries but layout has " .. tostring(#physical) .. " keys"
+    )
+  end
+
+  local remapped = {}
+  local used = {}
+
+  for logical_index, physical_index in ipairs(positions) do
+    if physical_index ~= math.floor(physical_index) then
+      deps.fail("position map entry at index " .. tostring(logical_index) .. " is not an integer")
+    end
+    if physical_index < 0 or physical_index >= #physical then
+      deps.fail(
+        "position map entry at index "
+          .. tostring(logical_index)
+          .. " is out of range: "
+          .. tostring(physical_index)
+      )
+    end
+    if used[physical_index] then
+      deps.fail("position map uses duplicate physical index " .. tostring(physical_index))
+    end
+
+    local mapped = physical[physical_index + 1]
+    if mapped == nil then
+      deps.fail("position map references missing physical index " .. tostring(physical_index))
+    end
+
+    used[physical_index] = true
+    remapped[logical_index] = mapped
+  end
+
+  return remapped
+end
+
+local function parse_combos(text, behavior_arity, deps)
+  local cleaned = strip_comments(text)
+  local top_blocks = find_named_blocks(cleaned, deps.fail)
+  local combos_block = nil
+
+  for _, block in ipairs(top_blocks) do
+    if block.name == "combos" then
+      combos_block = block
+      break
+    end
+  end
+
+  if combos_block == nil then
+    return {}
+  end
+
+  local function arity(ref, tokens, index)
+    if behavior_arity[ref] ~= nil then
+      return behavior_arity[ref]
+    end
+    if ref == "bt" then
+      local next_token = tokens[index + 1]
+      if next_token == "BT_SEL" then
+        return 2
+      end
+      if next_token == "BT_CLR" then
+        return 1
+      end
+      return 1
+    end
+    return deps.builtin_arity[ref] or 0
+  end
+
+  local combo_blocks = find_named_blocks(combos_block.body, deps.fail)
+  local parsed = {}
+
+  for _, block in ipairs(combo_blocks) do
+    local key_positions_expr = block.body:match("key%-positions%s*=%s*<([^>]-)>")
+    if key_positions_expr ~= nil then
+      local binding_calls = parse_bindings_property(block.body, arity)
+      if #binding_calls == 0 then
+        emit_soft_warning(deps, "combo '" .. block.name .. "' has no bindings; skipping")
+      else
+        if #binding_calls > 1 then
+          emit_soft_warning(deps, "combo '" .. block.name .. "' has multiple bindings; using first")
+        end
+
+        local positions = parse_int_list(key_positions_expr, deps.fail, "combo '" .. block.name .. "' key-positions")
+        local layers = {}
+        local layers_expr = block.body:match("layers%s*=%s*<([^>]-)>")
+        if layers_expr ~= nil then
+          for token in layers_expr:gmatch("[^%s]+") do
+            local parsed_layer = parse_int(token)
+            if parsed_layer ~= nil then
+              table.insert(layers, tostring(parsed_layer))
+            else
+              table.insert(layers, token)
+            end
+          end
+        end
+
+        table.insert(parsed, {
+          name = block.name,
+          positions = positions,
+          layers = layers,
+          call = binding_calls[1],
+        })
+      end
+    end
+  end
+
+  table.sort(parsed, function(left, right)
+    return left.name < right.name
+  end)
+
+  return parsed
+end
+
+local function parse_physical_keys(text, deps)
   local cleaned = strip_comments(text)
   local keys = {}
 
@@ -260,7 +477,7 @@ local function parse_physical_keys(text, warn)
         ry = values[7],
       })
     else
-      warn("skipping malformed key_physical_attrs tuple: '" .. raw .. "'")
+      emit_soft_warning(deps, "skipping malformed key_physical_attrs tuple: '" .. raw .. "'")
     end
   end
 
@@ -269,6 +486,26 @@ end
 
 local function resolve_call(call, behaviors, deps)
   local ref = call.ref
+
+  local function unknown(reason)
+    local raw = call.raw or ("&" .. ref .. (next(call.args) and (" " .. table.concat(call.args, " ")) or ""))
+    emit_soft_warning(deps, "unsupported binding '" .. raw .. "': " .. reason)
+    return {
+      kind = "unknown",
+      call = call,
+      legend = {
+        tap = "?",
+      },
+      raw = raw,
+      reason = reason,
+    }
+  end
+
+  if call.missing_args then
+    local expected = tostring(call.expected_arity or 0)
+    local got = tostring(#call.args)
+    return unknown("expected " .. expected .. " argument(s), got " .. got)
+  end
 
   if ref == "none" then
     return { kind = "none", call = call, legend = { tap = "None" } }
@@ -329,6 +566,22 @@ local function resolve_call(call, behaviors, deps)
         },
       }
     end
+
+    if behavior.compatible == "zmk,behavior-macro" then
+      return {
+        kind = "simple",
+        call = call,
+        legend = {
+          tap = deps.call_label(call),
+        },
+      }
+    end
+
+    return unknown("behavior compatible '" .. behavior.compatible .. "' not yet supported")
+  end
+
+  if not SIMPLE_SUPPORTED_REFS[ref] then
+    return unknown("unknown behavior reference")
   end
 
   return {
@@ -338,6 +591,40 @@ local function resolve_call(call, behaviors, deps)
       tap = deps.call_label(call),
     },
   }
+end
+
+local function resolve_combos(parsed_combos, behaviors, deps)
+  local combos = {}
+
+  for _, combo in ipairs(parsed_combos) do
+    table.insert(combos, {
+      name = combo.name,
+      positions = combo.positions,
+      layers = combo.layers,
+      binding = resolve_call(combo.call, behaviors, deps),
+    })
+  end
+
+  return combos
+end
+
+local function parse_macros(behaviors)
+  local macros = {}
+
+  for alias, behavior in pairs(behaviors) do
+    if behavior.compatible == "zmk,behavior-macro" then
+      table.insert(macros, {
+        name = alias,
+        steps = behavior.bindings,
+      })
+    end
+  end
+
+  table.sort(macros, function(left, right)
+    return left.name < right.name
+  end)
+
+  return macros
 end
 
 local function resolve_layers(parsed_layers, behaviors, deps)
@@ -366,13 +653,21 @@ function M.parse_and_resolve(input)
   end
 
   local parsed_layers = parse_layers(input.keymap_text, behavior_arity, input)
+  local parsed_combos = parse_combos(input.keymap_text, behavior_arity, input)
   local resolved_layers = resolve_layers(parsed_layers, behaviors, input)
-  local physical = parse_physical_keys(input.layout_text, input.warn)
+  local physical = parse_physical_keys(input.layout_text, input)
+  local positions = parse_position_map(input.layout_text, input.keyboard, input)
+  local mapped_physical = apply_position_map(physical, positions, input)
+  local combos = resolve_combos(parsed_combos, behaviors, input)
+  local macros = parse_macros(behaviors)
 
   return {
     behaviors = behaviors,
     layers = resolved_layers,
-    physical = physical,
+    physical = mapped_physical,
+    position_map = positions,
+    combos = combos,
+    macros = macros,
   }
 end
 

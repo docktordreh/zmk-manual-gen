@@ -1,10 +1,51 @@
 local M = {}
 
-local function load_local_module(file_name)
-  local module_path = kpse.find_file(file_name, "tex")
-  if module_path == nil then
-    module_path = file_name
+local function file_exists(path)
+  local handle = io.open(path, "r")
+  if handle == nil then
+    return false
   end
+  handle:close()
+  return true
+end
+
+local function dirname(path)
+  if path == nil or path == "" then
+    return nil
+  end
+  local normalized = path:gsub("\\", "/")
+  return normalized:match("^(.*)/[^/]*$")
+end
+
+local module_dir = nil
+if type(zmkmanual_module_dir) == "string" and zmkmanual_module_dir ~= "" then
+  module_dir = zmkmanual_module_dir:gsub("\\", "/")
+end
+
+local function load_local_module(file_name)
+  local candidates = {}
+  if module_dir ~= nil then
+    table.insert(candidates, module_dir .. "/" .. file_name)
+  end
+  table.insert(candidates, file_name)
+
+  local kpse_path = kpse.find_file(file_name, "tex")
+  if kpse_path ~= nil then
+    table.insert(candidates, kpse_path)
+  end
+
+  local module_path = nil
+  for _, candidate in ipairs(candidates) do
+    if file_exists(candidate) then
+      module_path = candidate
+      break
+    end
+  end
+
+  if module_path == nil then
+    error("zmkmanual: cannot locate module '" .. file_name .. "'")
+  end
+
   local ok, module_or_err = pcall(dofile, module_path)
   if not ok then
     error("zmkmanual: failed to load module '" .. file_name .. "': " .. tostring(module_or_err))
@@ -412,6 +453,37 @@ local function strict_or_warn(message)
   warn(message)
 end
 
+local function format_call(call)
+  if call == nil then
+    return "?"
+  end
+  return call_label(call)
+end
+
+local function format_positions(positions)
+  if positions == nil or #positions == 0 then
+    return "All"
+  end
+
+  local rendered = {}
+  for _, value in ipairs(positions) do
+    table.insert(rendered, tostring(value))
+  end
+  return table.concat(rendered, ", ")
+end
+
+local function format_combo_layers(layers)
+  if layers == nil or #layers == 0 then
+    return "All"
+  end
+
+  local rendered = {}
+  for _, raw in ipairs(layers) do
+    table.insert(rendered, format_layer_ref(raw))
+  end
+  return table.concat(rendered, ", ")
+end
+
 local function new_renderer()
   return renderer_module.new({
     data = state.data,
@@ -523,16 +595,25 @@ function M.load_config(opts)
     keymap_text = keymap_text,
     layout_text = layout_text,
     behavior_text = behavior_text,
+    keyboard = config.keyboard,
     builtin_arity = builtin_arity,
     key_label = key_label,
     call_label = call_label,
     warn = warn,
+    soft_warn = function(message)
+      if strict then
+        fail(message)
+      end
+      warn(message)
+    end,
     fail = fail,
   })
 
   local behaviors = parsed.behaviors
   local resolved_layers = parsed.layers
   local physical = parsed.physical
+  local combos = parsed.combos or {}
+  local macros = parsed.macros or {}
 
   if #resolved_layers == 0 then
     fail("no layers parsed from keymap")
@@ -543,18 +624,15 @@ function M.load_config(opts)
 
   for _, layer in ipairs(resolved_layers) do
     if #layer.bindings ~= #physical then
-      local mismatch = "layer '"
-        .. layer.name
-        .. "' has "
-        .. tostring(#layer.bindings)
-        .. " bindings but layout has "
-        .. tostring(#physical)
-        .. " keys"
-      if config.strict then
-        fail(mismatch)
-      else
-        warn(mismatch)
-      end
+      fail(
+        "layer '"
+          .. layer.name
+          .. "' has "
+          .. tostring(#layer.bindings)
+          .. " bindings but layout has "
+          .. tostring(#physical)
+          .. " keys"
+      )
     end
   end
 
@@ -563,8 +641,8 @@ function M.load_config(opts)
     layers = resolved_layers,
     physical = physical,
     behaviors = behaviors,
-    combos = {},
-    macros = {},
+    combos = combos,
+    macros = macros,
   }
   state.loaded = true
 
@@ -638,6 +716,24 @@ function M.print_combos()
     tex.print("None defined in parsed sources.\\par")
     return
   end
+
+  tex.print("\\begin{tabular}{llll}")
+  tex.print("Name & Positions & Layers & Binding\\\\")
+  tex.print("\\hline")
+  for _, combo in ipairs(state.data.combos) do
+    local binding_label = display_binding_name(combo.binding)
+    tex.print(
+      tex_escape(combo.name)
+        .. " & "
+        .. tex_escape(format_positions(combo.positions))
+        .. " & "
+        .. tex_escape(format_combo_layers(combo.layers))
+        .. " & "
+        .. tex_keycap_label(binding_label)
+        .. "\\\\"
+    )
+  end
+  tex.print("\\end{tabular}")
 end
 
 function M.print_macros()
@@ -647,6 +743,24 @@ function M.print_macros()
     tex.print("None defined in parsed sources.\\par")
     return
   end
+
+  tex.print("\\begin{tabular}{ll}")
+  tex.print("Name & Steps\\\\")
+  tex.print("\\hline")
+  for _, macro in ipairs(state.data.macros) do
+    local step_labels = {}
+    for _, step in ipairs(macro.steps or {}) do
+      table.insert(step_labels, tex_keycap_label(format_call(step)))
+    end
+
+    local rendered_steps = "(empty)"
+    if #step_labels > 0 then
+      rendered_steps = table.concat(step_labels, " \\ensuremath{\\rightarrow} ")
+    end
+
+    tex.print(tex_escape(macro.name) .. " & " .. rendered_steps .. "\\\\")
+  end
+  tex.print("\\end{tabular}")
 end
 
 return M

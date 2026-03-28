@@ -23,10 +23,26 @@
 \ProcessKeyvalOptions*
 
 \directlua{
-  local lua_file = kpse.find_file("zmkmanual.lua", "tex")
-  if lua_file == nil then
-    lua_file = "zmkmanual.lua"
+  local function file_exists(path)
+    local handle = io.open(path, "r")
+    if handle == nil then
+      return false
+    end
+    handle:close()
+    return true
   end
+
+  local lua_file = "zmkmanual.lua"
+  if not file_exists(lua_file) then
+    lua_file = kpse.find_file("zmkmanual.lua", "tex")
+  end
+  if lua_file == nil then
+    error("zmkmanual: cannot locate zmkmanual.lua")
+  end
+
+  local normalized = lua_file:gsub("\\\\", "/")
+  zmkmanual_module_dir = normalized:match("^(.*)/[^/]+$")
+
   zmkmanual = dofile(lua_file)
 }
 

@@ -108,7 +108,7 @@ def tex_escape_option(value: str) -> str:
     return escaped
 
 
-def render_tex(shield: ShieldFiles, keycap_scale: float, overview_scale: float) -> str:
+def render_tex(shield: ShieldFiles, keyboard_name: str, keycap_scale: float, overview_scale: float) -> str:
     keymap = tex_escape_option(str(shield.keymap.resolve()))
     layout = tex_escape_option(str(shield.layout.resolve()))
     behaviors = tex_escape_option(str(shield.behaviors.resolve()))
@@ -117,7 +117,7 @@ def render_tex(shield: ShieldFiles, keycap_scale: float, overview_scale: float) 
 
 \\usepackage[a3paper,landscape,margin=10mm]{{geometry}}
 \\usepackage[
-  keyboard={shield.shield},
+  keyboard={keyboard_name},
   keymap={keymap},
   layout={layout},
   behaviors={behaviors},
@@ -182,13 +182,51 @@ def compile_pdf(tex_source: str, package_dir: Path, output_pdf: Path) -> None:
         shutil.copy2(built_pdf, output_pdf)
 
 
+def export_images(pdf_path: Path, images_dir: Path, base_name: str, image_dpi: int) -> list[Path]:
+    converter = shutil.which("pdftoppm")
+    if converter is None:
+        raise RuntimeError("pdftoppm not found; install poppler-utils or omit --images-dir")
+
+    images_dir.mkdir(parents=True, exist_ok=True)
+    for stale in images_dir.glob(f"{base_name}-page-*.png"):
+        stale.unlink()
+
+    prefix = images_dir / f"{base_name}-page"
+    command = [
+        converter,
+        "-png",
+        "-r",
+        str(image_dpi),
+        str(pdf_path),
+        str(prefix),
+    ]
+    run = subprocess.run(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    if run.returncode != 0:
+        print(run.stdout, file=sys.stderr)
+        raise RuntimeError("pdftoppm failed while exporting images")
+
+    generated = sorted(images_dir.glob(f"{base_name}-page-*.png"))
+    if not generated:
+        raise RuntimeError("image export succeeded but no PNG files were produced")
+    return generated
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Build a ZMK manual PDF from a local ZMK config repository",
     )
     parser.add_argument("repo", help="Path to local ZMK git repository")
     parser.add_argument("--shield", help="Shield name under boards/shields")
+    parser.add_argument("--keyboard", help="Keyboard name for zmkmanual option and output filename")
     parser.add_argument("--output", help="Output PDF path")
+    parser.add_argument("--images-dir", help="Optional output directory for per-page PNG exports")
+    parser.add_argument("--image-dpi", type=int, default=180, help="PNG export DPI for --images-dir")
     parser.add_argument("--keycap-scale", type=float, default=0.90, help="Per-layer keycap visual scale")
     parser.add_argument("--overview-scale", type=float, default=1.35, help="Overview graphic scale")
     return parser.parse_args()
@@ -212,6 +250,9 @@ def main() -> int:
     if args.overview_scale <= 0:
         print("error: --overview-scale must be > 0", file=sys.stderr)
         return 2
+    if args.image_dpi <= 0:
+        print("error: --image-dpi must be > 0", file=sys.stderr)
+        return 2
 
     package_dir = Path(__file__).resolve().parent
 
@@ -221,14 +262,16 @@ def main() -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
+    keyboard_name = args.keyboard if args.keyboard else shield.shield
+
     if args.output:
         output_pdf = Path(args.output).expanduser().resolve()
         if output_pdf.is_dir():
-            output_pdf = output_pdf / f"{shield.shield}-manual.pdf"
+            output_pdf = output_pdf / f"{keyboard_name}-manual.pdf"
     else:
-        output_pdf = repo / f"{shield.shield}-manual.pdf"
+        output_pdf = Path.cwd() / f"{keyboard_name}-manual.pdf"
 
-    tex_source = render_tex(shield, args.keycap_scale, args.overview_scale)
+    tex_source = render_tex(shield, keyboard_name, args.keycap_scale, args.overview_scale)
 
     try:
         compile_pdf(tex_source, package_dir, output_pdf)
@@ -236,11 +279,32 @@ def main() -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
+    generated_images: list[Path] = []
+    if args.images_dir:
+        images_dir = Path(args.images_dir).expanduser().resolve()
+        if images_dir.exists() and not images_dir.is_dir():
+            print(f"error: --images-dir is not a directory: {images_dir}", file=sys.stderr)
+            return 2
+        try:
+            generated_images = export_images(
+                pdf_path=output_pdf,
+                images_dir=images_dir,
+                base_name=f"{keyboard_name}-manual",
+                image_dpi=args.image_dpi,
+            )
+        except RuntimeError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
     print(f"PDF written: {output_pdf}")
     print(f"Shield: {shield.shield}")
+    print(f"Keyboard: {keyboard_name}")
     print(f"Keymap: {shield.keymap}")
     print(f"Layout: {shield.layout}")
     print(f"Behaviors: {shield.behaviors}")
+    if generated_images:
+        print(f"Images: {len(generated_images)} PNG pages")
+        print(f"Images dir: {generated_images[0].parent}")
     return 0
 
 
