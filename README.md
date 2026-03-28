@@ -69,7 +69,7 @@ Output naming pattern:
 
 ## GitHub Actions Integration
 
-To extend the default upstream ZMK firmware workflow with manual generation, add a second job like this:
+To extend the default upstream ZMK firmware workflow with manual generation, infer shields from `boards/shields`, build PDF-only output, and upload PDFs as workflow artifacts:
 
 ```yaml
 name: Build ZMK firmware + manuals
@@ -82,14 +82,6 @@ jobs:
   manual:
     runs-on: ubuntu-latest
     needs: build
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - shield: corne
-            keyboard: corne
-          - shield: kyria
-            keyboard: kyria
     steps:
       - uses: actions/checkout@v4
         with:
@@ -102,24 +94,60 @@ jobs:
           path: zmk-manual-gen
 
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y texlive-luatex texlive-latex-extra texlive-pictures poppler-utils
+        run: sudo apt-get update && sudo apt-get install -y texlive-luatex texlive-latex-extra texlive-pictures
 
-      - name: Build manual
+      - name: Build manuals (auto-discover shields)
         run: |
-          mkdir -p artifacts/${{ matrix.shield }}
-          python zmk-manual-gen/build-manual.py config \
-            --shield ${{ matrix.shield }} \
-            --keyboard ${{ matrix.keyboard }} \
-            --output artifacts/${{ matrix.shield }} \
-            --images-dir artifacts/${{ matrix.shield }}/images
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess
+          import sys
 
-      - uses: actions/upload-artifact@v4
+          shields_root = Path("config/boards/shields")
+          shields = []
+          if shields_root.is_dir():
+            for shield_dir in sorted(p for p in shields_root.iterdir() if p.is_dir()):
+              name = shield_dir.name
+              has_keymap = any(shield_dir.glob("*.keymap"))
+              has_behaviors = (shield_dir / "behaviors.dtsi").is_file()
+              has_layout = (shield_dir / f"{name}-layouts.dtsi").is_file() or any(shield_dir.glob("*layout*.dtsi"))
+              if has_keymap and has_behaviors and has_layout:
+                shields.append(name)
+
+          if not shields:
+            print("No usable shields found under config/boards/shields", file=sys.stderr)
+            sys.exit(1)
+
+          artifacts = Path("artifacts")
+          artifacts.mkdir(parents=True, exist_ok=True)
+
+          for shield in shields:
+            out_dir = artifacts / shield
+            out_dir.mkdir(parents=True, exist_ok=True)
+            cmd = [
+              "python",
+              "zmk-manual-gen/build-manual.py",
+              "config",
+              "--shield",
+              shield,
+              "--keyboard",
+              shield,
+              "--output",
+              str(out_dir / f"{shield}-manual.pdf"),
+            ]
+            print("Running:", " ".join(cmd))
+            subprocess.run(cmd, check=True)
+          PY
+
+      - name: Upload PDFs artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: zmk-manual-${{ matrix.shield }}-${{ github.sha }}
-          path: artifacts/${{ matrix.shield }}/
+          name: zmk-manual-pdfs-${{ github.sha }}
+          path: artifacts/**/*.pdf
 ```
 
-Replace matrix shields/keyboards and `repository:` with your values. Optionally pin `ref:` to a release tag or commit SHA.
+Replace `repository:` with your values. Optionally pin `ref:` to a release tag or commit SHA.
+No custom secret required for artifact uploads.
 
 ## PDF Walkthrough
 
