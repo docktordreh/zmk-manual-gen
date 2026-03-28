@@ -11,8 +11,6 @@ LuaLaTeX toolkit for generating physical-layout ZMK manuals from source-of-truth
 - `labels.lua`: key labels, aliases, symbol normalization
 - `annotations.lua`: complex-binding callouts and legend connectors
 - `build-manual.py`: one-shot PDF (and optional image) build helper
-- `github-workflow-build-zmk-example.yml`: minimal upstream ZMK firmware workflow
-- `github-workflow-build-zmk-with-manual-matrix-example.yml`: extension pattern with manual build matrix by shield
 
 ## LaTeX Commands
 
@@ -71,27 +69,57 @@ Output naming pattern:
 
 ## GitHub Actions Integration
 
-This repo includes workflow examples for extending the upstream ZMK reusable build workflow.
+To extend the default upstream ZMK firmware workflow with manual generation, add a second job like this:
 
-Minimal base workflow:
+```yaml
+name: Build ZMK firmware + manuals
+on: [push, pull_request, workflow_dispatch]
 
-- `github-workflow-build-zmk-example.yml`
-- Only calls `zmkfirmware/zmk/.github/workflows/build-user-config.yml@v0.3`
+jobs:
+  build:
+    uses: zmkfirmware/zmk/.github/workflows/build-user-config.yml@v0.3
 
-Extended workflow with manual generation matrix:
+  manual:
+    runs-on: ubuntu-latest
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shield: corne
+            keyboard: corne
+          - shield: kyria
+            keyboard: kyria
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: config
 
-- `github-workflow-build-zmk-with-manual-matrix-example.yml`
-- Keeps the same base ZMK build job
-- Adds `manual` job with matrix `shield`/`keyboard`
-- Builds PDF + PNG pages via `build-manual.py`
-- Uploads per-shield artifacts
+      - uses: actions/checkout@v4
+        with:
+          repository: your-org/zmk-manual-gen
+          ref: main
+          path: zmk-manual-gen
 
-How to use the extended example:
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y texlive-luatex texlive-latex-extra texlive-pictures poppler-utils
 
-1. Copy file to your ZMK config repo under `.github/workflows/`.
-2. Replace matrix values with your real shields/keyboards.
-3. Replace `repository: your-org/zmk-manual-gen` with your tool repo.
-4. Optionally pin `ref:` to a release tag or commit SHA.
+      - name: Build manual
+        run: |
+          mkdir -p artifacts/${{ matrix.shield }}
+          python zmk-manual-gen/build-manual.py config \
+            --shield ${{ matrix.shield }} \
+            --keyboard ${{ matrix.keyboard }} \
+            --output artifacts/${{ matrix.shield }} \
+            --images-dir artifacts/${{ matrix.shield }}/images
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zmk-manual-${{ matrix.shield }}-${{ github.sha }}
+          path: artifacts/${{ matrix.shield }}/
+```
+
+Replace matrix shields/keyboards and `repository:` with your values. Optionally pin `ref:` to a release tag or commit SHA.
 
 ## PDF Walkthrough
 
