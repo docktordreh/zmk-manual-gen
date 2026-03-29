@@ -89,7 +89,7 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
-          repository: your-org/zmk-manual-gen
+          repository: docktordreh/zmk-manual-gen
           ref: main
           path: zmk-manual-gen
 
@@ -146,25 +146,24 @@ jobs:
           path: artifacts/**/*.pdf
 ```
 
-Replace `repository:` with your values. Optionally pin `ref:` to a release tag or commit SHA.
-No custom secret required for artifact uploads.
+Optionally pin `ref:` to a release tag or commit SHA.
 
 ## PDF Walkthrough
 
 ### All-Layers Overview
 
-![Cosmotyl manual page 1](docs/images/cosmotyl/cosmotyl-manual-page-01.png)
+![Example manual page 1](docs/images/cosmotyl/cosmotyl-manual-page-01.png)
 
 This first page is an overlay view across all layers. Every physical key position appears once, and each colored line inside a key is that key's behavior on a different layer. The "Layer colors" legend maps each color to its layer.
 
 ### Per-Layer Detail Page
 
-![Cosmotyl manual page 2](docs/images/cosmotyl/cosmotyl-manual-page-02.png)
+![Example manual page 2](docs/images/cosmotyl/cosmotyl-manual-page-02.png)
 
 After the overview, the PDF switches to individual layer pages. Each key is rendered in exact physical position, and complex behaviors are called out with connector lines to the legend so keycaps stay readable while still documenting hold-tap/tap-dance/layer actions.
 
 ### Reference Sections
 
-![Cosmotyl manual page 10](docs/images/cosmotyl/cosmotyl-manual-page-10.png)
+![Example manual page 10](docs/images/cosmotyl/cosmotyl-manual-page-10.png)
 
 The final section is reference-oriented: behavior index (ref/count/meaning), then combos and macros. Combos/macros are always shown, including explicit "none defined" output when the source has none.
